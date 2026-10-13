@@ -157,6 +157,18 @@ type callTrace struct {
 	// (recordBodies). It is nil on every ordinary run, which is what keeps a
 	// person's prompts out of a file they did not ask to have them in.
 	body []byte
+	// demandedOnly is the SET the LAST encode of this call put on the wire -
+	// `provider.only` as [Client.wirePreferences] composed it, after the rescue
+	// arm, the refused-here drop and the retry-avoid narrowing have each had
+	// their say. It is the demand that actually travelled for the current
+	// attempt, not the choice the call was decided on: a rescue sends one
+	// machine, a narrowed retry drops the machine that refused, and a row built
+	// from the original choice would claim a set that attempt never carried. It
+	// is read when a row records its demanded set (calllog.go's [demandedLanes])
+	// and, like the per-attempt knobs, is captured onto the [openAttempt] so a
+	// finish row written after the next attempt has re-encoded still describes
+	// its own.
+	demandedOnly []string
 }
 
 func newCallTrace() *callTrace { return &callTrace{} }
@@ -175,6 +187,11 @@ type openAttempt struct {
 	knobs   callKnobs
 	stream  bool
 	base    string
+	// demandedOnly is the composed `provider.only` this attempt went out with,
+	// captured from the trace at the moment the start row opened the attempt so
+	// a finish row written after a later attempt re-encoded still describes the
+	// set THIS one carried (callTrace's [demandedOnly]).
+	demandedOnly []string
 }
 
 // The words [calllog.Record.Ended] uses. They are constants for the reason the
@@ -210,13 +227,14 @@ func (t *callTrace) track(facts recordFacts, id string) {
 		return
 	}
 	t.open = &openAttempt{
-		id:      id,
-		attempt: facts.attempt,
-		began:   facts.began,
-		request: facts.request,
-		knobs:   facts.knobs,
-		stream:  facts.stream,
-		base:    facts.baseFor(t.attemptBase),
+		id:           id,
+		attempt:      facts.attempt,
+		began:        facts.began,
+		request:      facts.request,
+		knobs:        facts.knobs,
+		stream:       facts.stream,
+		base:         facts.baseFor(t.attemptBase),
+		demandedOnly: t.demandedOnly,
 	}
 }
 
@@ -448,8 +466,9 @@ func (c *Client) record(facts recordFacts) {
 	// THIS attempt, so that the row of a rescue says what the rescue did and
 	// the row of the request it rescued says what happened to that one.
 	if wait, watched := streamWatchFrom(facts.ctx).facts(); watched {
-		record.Lane = recordedLane(body, wait.lane)
-		record.Lanes = demandedLanes(body)
+		demanded := bodyDemandedOnly(facts)
+		record.Lane = recordedLane(body, wait.lane, demanded)
+		record.Lanes = demandedLanes(demanded)
 		record.HazardCeilingMs = wait.deadline.Milliseconds()
 		// WHAT WAS PLANNED AND WHAT HAPPENED ARE TWO FIELDS, AND THE ROW MAY
 		// CARRY BOTH. The ceiling above is when the watch was going to start
@@ -662,6 +681,25 @@ func bodyKnobs(facts recordFacts) callKnobs {
 	return facts.knobs
 }
 
+// bodyDemandedOnly is the composed `provider.only` THIS ROW IS ABOUT, resolved
+// the three ways [bodyKnobs] resolves its knobs. A start row is written before
+// the attempt is tracked, so the trace's own last-encoded set is this attempt's
+// (encode runs before the start row); an ordinary end row reads it off the open
+// attempt that captured it; and the unconditional closing row reads the carried
+// knobs' trace, whose open attempt is gone, so the trace's last-encoded set
+// stands - which is still this attempt's, because the next attempt has not
+// re-encoded.
+func bodyDemandedOnly(facts recordFacts) []string {
+	trace := facts.knobs.trace
+	if trace == nil {
+		return nil
+	}
+	if facts.phase != calllog.PhaseStart && trace.open != nil {
+		return trace.open.demandedOnly
+	}
+	return trace.demandedOnly
+}
+
 // soleDemandedLane is the one machine THIS ATTEMPT'S BODY was pinned to, and ""
 // when it was free to be routed anywhere. A rescue demands the single arm it
 // walked to (hedge.go's [hedgePreference]) and a person's pin is one machine
@@ -700,15 +738,26 @@ func soleDemandedLane(knobs callKnobs) string {
 // hedge demands its one arm and is the same single case. This field exists for
 // the one thing [Lane] cannot say - that served being a DIFFERENT member of the
 // set was the router choosing inside the choice, not routing around it.
-func demandedLanes(knobs callKnobs) []string {
-	if !knobs.carriesTheDemand() {
+// demandedLanes is the SET this attempt actually went out demanding, and "" (an
+// absent field) when it demanded nothing or demanded exactly one. `composed` is
+// `provider.only` AS IT TRAVELLED for this attempt, captured at encode time
+// (wire.go) and read off the open attempt or the trace by [bodyDemandedOnly] -
+// NOT off `laneChoice.Only`, which is the choice the call was decided on. The
+// two part company on exactly the rows that matter: a rescue narrows the demand
+// to its one arm, a refusal drops the machine that refused, and a row built from
+// the original choice would claim a set the attempt never carried and read a
+// different member of it as agreement.
+//
+// A single-machine demand is left to [Lane] alone, which already answers it; a
+// hedge sends its one arm and is the same single case. This field exists for
+// the one thing [Lane] cannot say - that served being a DIFFERENT member of the
+// set was the router choosing inside the choice, not routing around it.
+func demandedLanes(composed []string) []string {
+	if len(composed) < 2 {
 		return nil
 	}
-	if knobs.laneChoice == nil || len(knobs.laneChoice.Only) < 2 {
-		return nil
-	}
-	lanes := make([]string, 0, len(knobs.laneChoice.Only))
-	for _, name := range knobs.laneChoice.Only {
+	lanes := make([]string, 0, len(composed))
+	for _, name := range composed {
 		if name = strings.TrimSpace(name); name != "" {
 			lanes = append(lanes, name)
 		}
@@ -728,7 +777,21 @@ func demandedLanes(knobs callKnobs) []string {
 // `order` standing, so a lane the choice merely RANKED is still this body's ask
 // and a lane it DEMANDED is not — and a pinned request's bare retry was
 // reported under the name of the machine whose refusal it was recovering from.
-func recordedLane(knobs callKnobs, asked string) string {
+//
+// AND A COMPOSED DEMAND OF ONE MACHINE IS THE AUTHORITY ON THE LANE. When this
+// attempt went out with `provider.only` naming exactly one machine - a rescue's
+// arm, or a retry narrowed to the one machine that has not refused - that
+// machine is what was asked for, not the head of the order the call was decided
+// on. Without this a retry that dropped `cinnabar` and demanded `tinder` was
+// still logged `lane: cinnabar`, the machine whose refusal it was recovering
+// from (#1796 review). The ranked head stands only when the demand did not
+// narrow to one.
+func recordedLane(knobs callKnobs, asked string, composed []string) string {
+	if len(composed) == 1 {
+		if lane := strings.TrimSpace(composed[0]); lane != "" {
+			return lane
+		}
+	}
 	if asked == "" || knobs.carriesTheDemand() {
 		return asked
 	}
