@@ -253,6 +253,7 @@ func (c *Client) closeOpenAttempt(ctx context.Context, trace *callTrace, ended s
 	c.record(recordFacts{
 		ctx: ctx, request: open.request, knobs: open.knobs, stream: open.stream,
 		attempt: open.attempt, began: open.began, ended: ended, id: open.id, base: open.base,
+		demandedOnly: open.demandedOnly,
 	})
 }
 
@@ -345,6 +346,13 @@ type recordFacts struct {
 	// overtaken, so reading the id off the trace would pair it with the wrong
 	// start row — which is the very mis-pairing the closing row exists to end.
 	id string
+	// demandedOnly is the composed `provider.only` of the attempt this row is
+	// about, carried ONLY on the unconditional closing row ([Client.closeOpenAttempt]).
+	// That path clears `trace.open` before it records, so the closed attempt's
+	// snapshot is no longer reachable off the trace and the latest encode's
+	// demand would stand in its place; carrying it here keeps the ending's set
+	// equal to the start's, exactly as `knobs` above is carried for the same row.
+	demandedOnly []string
 }
 
 // logNow is the wall clock the model-call log stamps its rows from, and it is
@@ -690,6 +698,17 @@ func bodyKnobs(facts recordFacts) callKnobs {
 // stands - which is still this attempt's, because the next attempt has not
 // re-encoded.
 func bodyDemandedOnly(facts recordFacts) []string {
+	// A CARRIED CLOSING ROW HOLDS ITS OWN SNAPSHOT. The unconditional close
+	// ([Client.closeOpenAttempt]) takes the attempt off the trace before it
+	// records, so neither branch below could reach the closed attempt's demand -
+	// the trace's `open` is gone and its last-encoded set is a LATER attempt's.
+	// The snapshot it carried stands, the same way `knobs` carries for that row,
+	// and it is read off `ended` (set ONLY on that row) rather than off the set
+	// being non-nil, so an attempt that was closed carrying no demand is not
+	// handed a later attempt's one.
+	if facts.ended != "" {
+		return facts.demandedOnly
+	}
 	trace := facts.knobs.trace
 	if trace == nil {
 		return nil
@@ -726,18 +745,6 @@ func soleDemandedLane(knobs callKnobs) string {
 	return ""
 }
 
-// demandedLanes is the SET this attempt's body demanded, and "" (an absent
-// field) when it demanded nothing or demanded exactly one. It is the whole of
-// `laneChoice.Only` - every machine the chooser admitted and told the router it
-// may not leave - and it is read under the same discipline as [soleDemandedLane]:
-// only when the demand is still being SENT ([callKnobs.carriesTheDemand]), never
-// off knobs the widen has already relaxed, so the row cannot claim a set a
-// retired pin's bare retry no longer carries.
-//
-// A single-machine demand is left to [Lane] alone, which already answers it; a
-// hedge demands its one arm and is the same single case. This field exists for
-// the one thing [Lane] cannot say - that served being a DIFFERENT member of the
-// set was the router choosing inside the choice, not routing around it.
 // demandedLanes is the SET this attempt actually went out demanding, and "" (an
 // absent field) when it demanded nothing or demanded exactly one. `composed` is
 // `provider.only` AS IT TRAVELLED for this attempt, captured at encode time

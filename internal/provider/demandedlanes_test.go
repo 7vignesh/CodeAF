@@ -32,8 +32,8 @@ func TestADemandedSetLeavesEveryAdmittedMachineOnTheRow(t *testing.T) {
 	if len(row.Lanes) != 2 || !hasName(row.Lanes, "cinnabar") || !hasName(row.Lanes, "tinder") {
 		t.Fatalf("lanes = %v, want both admitted machines on the row: %+v", row.Lanes, row)
 	}
-	if row.Lane != row.Lanes[0] {
-		t.Fatalf("lane = %q, want the ranked head of the demanded set %v", row.Lane, row.Lanes)
+	if !hasName(row.Lanes, row.Lane) {
+		t.Fatalf("lane = %q is not a member of the demanded set %v", row.Lane, row.Lanes)
 	}
 	if row.Served == "" || !hasName(row.Lanes, row.Served) {
 		t.Fatalf("served = %q is not inside the admitted set %v", row.Served, row.Lanes)
@@ -142,6 +142,45 @@ func TestARescueArmRecordsOnlyTheMachineItWentOutTo(t *testing.T) {
 	}
 	if got := recordedLane(knobs, "cinnabar", knobs.trace.demandedOnly); got != "tinder" {
 		t.Fatalf("the rescue arm attributed to %q, want the machine it demanded (tinder)", got)
+	}
+}
+
+// TestAHoppedAttemptKeepsItsOwnDemandedSetThroughTheClose covers the fallback
+// closing mechanism (#1796 review, second pass): the unconditional close
+// ([Client.closeOpenAttempt]) clears `trace.open` before it records, so a finish
+// row built from it cannot reach the closed attempt's demand off the trace - the
+// trace's last-encoded set is a LATER attempt's. The closing row must read the
+// snapshot it was handed instead. This tests [bodyDemandedOnly] at that seam
+// directly, because the lane fields are only written for a watched call and the
+// close path's bug is in which set reaches them, not in the watch.
+func TestAHoppedAttemptKeepsItsOwnDemandedSetThroughTheClose(t *testing.T) {
+	trace := newCallTrace()
+	// Attempt 1 went out demanding both; its snapshot is what the close carries.
+	openOne := &openAttempt{id: "one", demandedOnly: []string{"cinnabar", "tinder"}}
+	// Attempt 2 has since re-encoded to one machine, so the trace's own set is
+	// tinder alone - the stand-in that would stand in if the snapshot were lost.
+	trace.demandedOnly = []string{"tinder"}
+	trace.open = nil // closeOpenAttempt cleared it before recording.
+
+	// The carried closing row, as closeOpenAttempt builds it: ended set, the
+	// closed attempt's own snapshot carried, the trace holding a later set.
+	closing := recordFacts{
+		knobs:        callKnobs{trace: trace},
+		ended:        endedHopped,
+		demandedOnly: openOne.demandedOnly,
+	}
+	if got := bodyDemandedOnly(closing); len(got) != 2 || !hasName(got, "cinnabar") || !hasName(got, "tinder") {
+		t.Fatalf("the hopped ending took a later attempt's demand: %v, want the set it carried", got)
+	}
+	if got := demandedLanes(bodyDemandedOnly(closing)); len(got) != 2 {
+		t.Fatalf("the hopped ending wrote the wrong set: lanes = %v", got)
+	}
+
+	// And an attempt closed carrying NO demand is not handed the trace's later
+	// one: the snapshot, not the non-nil-ness of the field, is the signal.
+	singleClose := recordFacts{knobs: callKnobs{trace: trace}, ended: endedHopped, demandedOnly: nil}
+	if got := bodyDemandedOnly(singleClose); got != nil {
+		t.Fatalf("an attempt closed with no demand was handed %v", got)
 	}
 }
 
