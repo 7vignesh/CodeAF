@@ -693,10 +693,9 @@ func bodyKnobs(facts recordFacts) callKnobs {
 // the three ways [bodyKnobs] resolves its knobs. A start row is written before
 // the attempt is tracked, so the trace's own last-encoded set is this attempt's
 // (encode runs before the start row); an ordinary end row reads it off the open
-// attempt that captured it; and the unconditional closing row reads the carried
-// knobs' trace, whose open attempt is gone, so the trace's last-encoded set
-// stands - which is still this attempt's, because the next attempt has not
-// re-encoded.
+// attempt that captured it. The unconditional closing row instead reads the
+// closed attempt's snapshot carried in [recordFacts], including an empty
+// demand, because the trace may already hold a later attempt's encoded set.
 func bodyDemandedOnly(facts recordFacts) []string {
 	// A CARRIED CLOSING ROW HOLDS ITS OWN SNAPSHOT. The unconditional close
 	// ([Client.closeOpenAttempt]) takes the attempt off the trace before it

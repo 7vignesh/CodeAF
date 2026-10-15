@@ -266,10 +266,9 @@ type Record struct {
 	// was free to leave the set) or demanded exactly one - the single case
 	// [Lane] alone already answers - which is also the state of every row written
 	// before the set-demanding chooser existed. The members are the endpoint
-	// names as the composed demand carried them. [Lane] is a member of this set
-	// but NOT necessarily its first: a retry narrowed from three machines to two
-	// can keep the original ranked head as [Lane] while [Lanes] names the pair
-	// that survived.
+	// names as the composed demand carried them. [Lane] need not belong to this
+	// set: a retry narrowed from three machines to two can retain the excluded
+	// ranked head as [Lane] while [Lanes] names the surviving pair.
 	Lanes []string `json:"lanes,omitempty"`
 	// Hedged marks the row of a call that was rescued by a second request to
 	// another lane. Both halves of the pair leave their own rows; this is what
