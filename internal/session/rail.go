@@ -51,6 +51,32 @@ func (a *Agent) spendRailUSD() float64 {
 	return a.config.SpendRailUSD
 }
 
+// dailyCeilingUSD is the machine-wide daily limit this session is held to, and
+// zero when there is none.
+//
+// A ROOT reads its profile live off [Config.ProfileDir] - which [config.DailyBudgetUSDAt]
+// resolves as the `CODEAF_DAILY_BUDGET` environment variable first and the
+// person's selected profile second - so a `/budget day` change made mid-session
+// takes effect on the next turn. A WORKER is handed no profile path (it would
+// open the settings door, ProfileDir says why), so the root resolves that same
+// figure once, environment variable and all, and carries it down as
+// [Config.DailyBudgetUSD].
+//
+// A WORKER NEVER READS A PROFILE HERE. [config.DailyBudgetUSDAt] with an empty
+// path returns the DEFAULT limit when no environment variable is set, and
+// holding a worker to a default the person never selected is the exact bug this
+// avoids - a worker refusing under a higher selected limit, or spending past a
+// lower one.
+func (a *Agent) dailyCeilingUSD() float64 {
+	if a.config.ProfileDir != "" {
+		if daily, err := config.DailyBudgetUSDAt(a.config.ProfileDir); err == nil {
+			return daily
+		}
+		return 0
+	}
+	return a.config.DailyBudgetUSD
+}
+
 // ErrSpendRail is what a refused turn carries in its EventError. It is a named
 // sentinel so a surface can match it with errors.Is and say the one thing worth
 // saying — the rail, not a provider fault — instead of matching on words.
@@ -63,24 +89,32 @@ func (a *Agent) railBlockLocked() error {
 		return err
 	}
 	// THE DAILY CEILING BINDS EVERY TURN-STARTING PATH, not interactive chat
-	// alone. It is the machine-wide limit over a day (internal/config), read off
-	// the shared ledger, so a task node's runner (InTask) and the home errand
-	// (Errand) are held to it exactly as a chat turn is: a conversation that has
-	// spent the day's allowance must start no new work, however the work was
-	// asked for. Checking it here rather than only in the crew guard is what
-	// closes the two roads that had no guard behind them - a task under
-	// `--one-model`, which has no crew, and an InTask turn, which skipped this
-	// block. It is a CEILING READ and never a tally, so a path already guarded by
-	// the crew's own day cap is refused in two places, never charged twice (#1546).
-	if daily, err := config.DailyBudgetUSDAt(a.config.ProfileDir); err == nil && daily > 0 {
-		spentToday := spentTodayOnLedger()
-		if a.crewDayHeld != nil {
-			spentToday = max(spentToday, a.crewDayHeld.Total())
-		}
-		if spentToday >= daily {
-			return spendRailReached{said: fmt.Sprintf(
-				"daily limit reached · %s spent of %s · /budget day changes it",
-				railMoney(spentToday), railMoney(daily))}
+	// alone. It is the machine-wide limit over a day (internal/config), so a task
+	// node's runner (InTask) and the home errand (Errand) are held to it exactly
+	// as a chat turn is: a conversation that has spent the day's allowance must
+	// start no new work, however the work was asked for. Checking it here rather
+	// than only in the crew guard is what closes the two roads that had no guard
+	// behind them - a task under `--one-model`, which has no crew, and an InTask
+	// turn, which skipped this block. It is a CEILING READ and never a tally, so
+	// a path already guarded by the crew's own day cap is refused in two places,
+	// never charged twice (#1546).
+	//
+	// `--yes-spend` / `CODEAF_PREAUTHORIZE_SPEND=1` is the person's standing
+	// permission to spend past the day, carried into workers as [Config.SpendPreauthorized];
+	// it lifts THIS limit and nothing else, the same authority `doSpendGuard`
+	// lifts from the crew guard (cmd/codeaf's do.go). A per-conversation or
+	// per-task limit stays in force below.
+	if !a.config.SpendPreauthorized {
+		if daily := a.dailyCeilingUSD(); daily > 0 {
+			spentToday := spentTodayOnLedger()
+			if a.crewDayHeld != nil {
+				spentToday = max(spentToday, a.crewDayHeld.Total())
+			}
+			if spentToday >= daily {
+				return spendRailReached{said: fmt.Sprintf(
+					"daily limit reached · %s spent of %s · /budget day changes it",
+					railMoney(spentToday), railMoney(daily))}
+			}
 		}
 	}
 	rail := a.spendRailUSD()

@@ -2308,6 +2308,29 @@ type Config struct {
 	// SpendRailUSD remains a separate, adjustable conversation spending limit.
 	Budget Budget
 
+	// DailyBudgetUSD is the machine-wide daily ceiling RESOLVED, carried into a
+	// worker that was handed no [ProfileDir] to read it from. It is the twin of
+	// [AttributionModelOff] and [TaskSettle]: a task node and an adaptive run's
+	// worker get no profile path (ProfileDir says why - it is the settings door),
+	// so the figure is resolved once at the root door and travels down with the
+	// work. [Agent.railBlockLocked] reads it when ProfileDir is empty and reads
+	// the live profile when ProfileDir is set, so the root still follows a change
+	// made mid-session and a worker is held to the limit the person actually
+	// selected rather than the default profile's.
+	//
+	// Zero is "nothing resolved": a worker with no carried figure and no profile
+	// falls back to no daily ceiling, which is the state before this field, and a
+	// root with ProfileDir set never reads it at all.
+	DailyBudgetUSD float64
+
+	// SpendPreauthorized is the person's `--yes-spend` / `CODEAF_PREAUTHORIZE_SPEND=1`
+	// standing permission to spend past the daily ceiling, resolved at the door
+	// and carried into workers the same way [DailyBudgetUSD] is. When it is set
+	// the daily check in [Agent.railBlockLocked] is lifted - exactly the
+	// authority `doSpendGuard` already lifts from the crew guard (cmd/codeaf's
+	// do.go) - while a separate per-task or per-conversation limit stays in force.
+	SpendPreauthorized bool
+
 	// newerBuild is the cheap process-local reading that says this running
 	// codeaf has been replaced on disk. It is private because the session owns
 	// when the reading reaches a turn; tests replace only the reading itself.

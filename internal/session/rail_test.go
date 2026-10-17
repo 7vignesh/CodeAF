@@ -246,6 +246,69 @@ func TestTheDailyCeilingBindsTaskAndErrandTurnsToo(t *testing.T) {
 	}
 }
 
+// TestAWorkerIsHeldToTheSelectedBudgetItCarriesNotTheDefault covers the #1842
+// review: a worker is handed no ProfileDir (it would open the settings door), so
+// the daily check must read the figure the root resolved and carried
+// ([Config.DailyBudgetUSD]), never a profile at an empty path - which returns
+// the DEFAULT limit and would refuse a worker under a higher selected limit and
+// let it spend past a lower one.
+func TestAWorkerIsHeldToTheSelectedBudgetItCarriesNotTheDefault(t *testing.T) {
+	// A worker: no ProfileDir, the selected limit carried down as $1.
+	worker := &Agent{}
+	worker.config.DailyBudgetUSD = 1.00
+	worker.crewDayHeld = NewSpendDay(1.50)
+	if err := worker.railBlockLocked(); err == nil {
+		t.Fatal("a worker past its carried $1 ceiling was allowed to start")
+	} else if !strings.Contains(err.Error(), "daily limit reached") {
+		t.Fatalf("error = %v, want the daily limit", err)
+	}
+
+	// The same spend ($0.60) under a HIGHER selected limit ($1000) carried down
+	// must NOT refuse - the bug was reading the default $500 and refusing here.
+	high := &Agent{}
+	high.config.DailyBudgetUSD = 1000.00
+	high.crewDayHeld = NewSpendDay(0.60)
+	if err := high.railBlockLocked(); err != nil {
+		t.Fatalf("a worker under its carried $1000 ceiling was refused: %v", err)
+	}
+
+	// A worker that carried no figure and has no profile is held to no daily
+	// ceiling - the state before the figure travelled, not a default.
+	none := &Agent{}
+	none.crewDayHeld = NewSpendDay(1000.00)
+	if err := none.railBlockLocked(); err != nil {
+		t.Fatalf("a worker with no carried ceiling was refused: %v", err)
+	}
+}
+
+// TestSpendPreauthorizationLiftsTheDailyCeiling covers the #1842 review's second
+// case: `--yes-spend` / `CODEAF_PREAUTHORIZE_SPEND=1` is the person's standing
+// permission to spend past the daily limit, so a preauthorized worker past the
+// ceiling runs rather than refusing - the same authority the crew guard already
+// honours. A separate conversation limit is NOT lifted by it.
+func TestSpendPreauthorizationLiftsTheDailyCeiling(t *testing.T) {
+	pre := &Agent{}
+	pre.config.DailyBudgetUSD = 1.00
+	pre.config.SpendPreauthorized = true
+	pre.crewDayHeld = NewSpendDay(1.50)
+	if err := pre.railBlockLocked(); err != nil {
+		t.Fatalf("a preauthorized worker past the daily ceiling was refused: %v", err)
+	}
+
+	// But a conversation limit stands even under preauthorization: --yes-spend
+	// lifts the day, not a ceiling the person put on this one conversation.
+	bounded := &Agent{}
+	bounded.config.DailyBudgetUSD = 1.00
+	bounded.config.SpendPreauthorized = true
+	bounded.config.SpendRailUSD = 0.50
+	bounded.usage.CostUSD = 0.60
+	if err := bounded.railBlockLocked(); err == nil {
+		t.Fatal("preauthorization lifted a conversation limit it should not")
+	} else if !strings.Contains(err.Error(), "conversation limit reached") {
+		t.Fatalf("error = %v, want the conversation limit", err)
+	}
+}
+
 // Raising the day's allowance does not remove a conversation's separate cap.
 // The named conversation setting must release the same live agent on retry.
 func TestBudgetScopeAndLiveConversationRecovery(t *testing.T) {
