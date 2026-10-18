@@ -7627,8 +7627,9 @@ func (a *Agent) newTaskAgentOn(ctx context.Context, dir string, node *TaskNode, 
 		// Without this a worker read the DEFAULT profile's limit, refusing under a
 		// higher selected one and spending past a lower one. The person's standing
 		// `--yes-spend` travels with it, lifting that one limit and no other.
-		DailyBudgetUSD:     a.dailyCeilingUSD(),
-		SpendPreauthorized: a.config.SpendPreauthorized,
+		DailyBudgetUSD:      a.dailyCeilingUSD(),
+		DailyBudgetResolved: true,
+		SpendPreauthorized:  a.config.SpendPreauthorized,
 		// AND WHOSE MONEY IT IS. Every line this worker records names the
 		// conversation the work is rooted in, however deep the family goes.
 		rootSession: root,

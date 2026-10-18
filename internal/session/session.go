@@ -2308,20 +2308,17 @@ type Config struct {
 	// SpendRailUSD remains a separate, adjustable conversation spending limit.
 	Budget Budget
 
-	// DailyBudgetUSD is the machine-wide daily ceiling RESOLVED, carried into a
-	// worker that was handed no [ProfileDir] to read it from. It is the twin of
-	// [AttributionModelOff] and [TaskSettle]: a task node and an adaptive run's
-	// worker get no profile path (ProfileDir says why - it is the settings door),
-	// so the figure is resolved once at the root door and travels down with the
-	// work. [Agent.railBlockLocked] reads it when ProfileDir is empty and reads
-	// the live profile when ProfileDir is set, so the root still follows a change
-	// made mid-session and a worker is held to the limit the person actually
-	// selected rather than the default profile's.
-	//
-	// Zero is "nothing resolved": a worker with no carried figure and no profile
-	// falls back to no daily ceiling, which is the state before this field, and a
-	// root with ProfileDir set never reads it at all.
+	// DailyBudgetUSD is the machine-wide daily ceiling resolved by a parent
+	// and carried into a worker without lending it the profile's settings door.
+	// It is read only when DailyBudgetResolved is true; zero then means unlimited.
 	DailyBudgetUSD float64
+
+	// DailyBudgetResolved says the daily ceiling was deliberately carried into
+	// this agent. Roots leave it false and read their profile and environment live,
+	// including the ordinary default profile whose ProfileDir is empty. A separate
+	// bit preserves a selected zero limit without mistaking an unset root for an
+	// unlimited worker.
+	DailyBudgetResolved bool
 
 	// SpendPreauthorized is the person's `--yes-spend` / `CODEAF_PREAUTHORIZE_SPEND=1`
 	// standing permission to spend past the daily ceiling, resolved at the door

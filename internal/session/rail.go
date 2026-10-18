@@ -54,27 +54,19 @@ func (a *Agent) spendRailUSD() float64 {
 // dailyCeilingUSD is the machine-wide daily limit this session is held to, and
 // zero when there is none.
 //
-// A ROOT reads its profile live off [Config.ProfileDir] - which [config.DailyBudgetUSDAt]
-// resolves as the `CODEAF_DAILY_BUDGET` environment variable first and the
-// person's selected profile second - so a `/budget day` change made mid-session
-// takes effect on the next turn. A WORKER is handed no profile path (it would
-// open the settings door, ProfileDir says why), so the root resolves that same
-// figure once, environment variable and all, and carries it down as
-// [Config.DailyBudgetUSD].
-//
-// A WORKER NEVER READS A PROFILE HERE. [config.DailyBudgetUSDAt] with an empty
-// path returns the DEFAULT limit when no environment variable is set, and
-// holding a worker to a default the person never selected is the exact bug this
-// avoids - a worker refusing under a higher selected limit, or spending past a
-// lower one.
+// A ROOT reads its profile live, including the ordinary empty default-profile
+// path, so a `/budget day` change takes effect on the next turn. A WORKER carries
+// the value resolved by its parent without gaining the profile's settings door.
+// [Config.DailyBudgetResolved] distinguishes that authority from an unset root
+// field; neither an empty path nor a zero amount can make that distinction.
 func (a *Agent) dailyCeilingUSD() float64 {
-	if a.config.ProfileDir != "" {
-		if daily, err := config.DailyBudgetUSDAt(a.config.ProfileDir); err == nil {
-			return daily
-		}
-		return 0
+	if a.config.DailyBudgetResolved {
+		return a.config.DailyBudgetUSD
 	}
-	return a.config.DailyBudgetUSD
+	if daily, err := config.DailyBudgetUSDAt(a.config.ProfileDir); err == nil {
+		return daily
+	}
+	return 0
 }
 
 // ErrSpendRail is what a refused turn carries in its EventError. It is a named

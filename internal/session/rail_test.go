@@ -250,12 +250,13 @@ func TestTheDailyCeilingBindsTaskAndErrandTurnsToo(t *testing.T) {
 // review: a worker is handed no ProfileDir (it would open the settings door), so
 // the daily check must read the figure the root resolved and carried
 // ([Config.DailyBudgetUSD]), never a profile at an empty path - which returns
-// the DEFAULT limit and would refuse a worker under a higher selected limit and
+// the default profile's limit and would refuse a worker under a higher selected limit and
 // let it spend past a lower one.
 func TestAWorkerIsHeldToTheSelectedBudgetItCarriesNotTheDefault(t *testing.T) {
 	// A worker: no ProfileDir, the selected limit carried down as $1.
 	worker := &Agent{}
 	worker.config.DailyBudgetUSD = 1.00
+	worker.config.DailyBudgetResolved = true
 	worker.crewDayHeld = NewSpendDay(1.50)
 	if err := worker.railBlockLocked(); err == nil {
 		t.Fatal("a worker past its carried $1 ceiling was allowed to start")
@@ -263,21 +264,21 @@ func TestAWorkerIsHeldToTheSelectedBudgetItCarriesNotTheDefault(t *testing.T) {
 		t.Fatalf("error = %v, want the daily limit", err)
 	}
 
-	// The same spend ($0.60) under a HIGHER selected limit ($1000) carried down
+	// The same spend ($600) under a HIGHER selected limit ($1000) carried down
 	// must NOT refuse - the bug was reading the default $500 and refusing here.
 	high := &Agent{}
 	high.config.DailyBudgetUSD = 1000.00
-	high.crewDayHeld = NewSpendDay(0.60)
+	high.config.DailyBudgetResolved = true
+	high.crewDayHeld = NewSpendDay(600.00)
 	if err := high.railBlockLocked(); err != nil {
 		t.Fatalf("a worker under its carried $1000 ceiling was refused: %v", err)
 	}
 
-	// A worker that carried no figure and has no profile is held to no daily
-	// ceiling - the state before the figure travelled, not a default.
-	none := &Agent{}
+	// An explicitly unlimited worker keeps its selected zero ceiling.
+	none := &Agent{config: Config{DailyBudgetResolved: true}}
 	none.crewDayHeld = NewSpendDay(1000.00)
 	if err := none.railBlockLocked(); err != nil {
-		t.Fatalf("a worker with no carried ceiling was refused: %v", err)
+		t.Fatalf("an explicitly unlimited worker was refused: %v", err)
 	}
 }
 
@@ -289,6 +290,7 @@ func TestAWorkerIsHeldToTheSelectedBudgetItCarriesNotTheDefault(t *testing.T) {
 func TestSpendPreauthorizationLiftsTheDailyCeiling(t *testing.T) {
 	pre := &Agent{}
 	pre.config.DailyBudgetUSD = 1.00
+	pre.config.DailyBudgetResolved = true
 	pre.config.SpendPreauthorized = true
 	pre.crewDayHeld = NewSpendDay(1.50)
 	if err := pre.railBlockLocked(); err != nil {
@@ -299,6 +301,7 @@ func TestSpendPreauthorizationLiftsTheDailyCeiling(t *testing.T) {
 	// lifts the day, not a ceiling the person put on this one conversation.
 	bounded := &Agent{}
 	bounded.config.DailyBudgetUSD = 1.00
+	bounded.config.DailyBudgetResolved = true
 	bounded.config.SpendPreauthorized = true
 	bounded.config.SpendRailUSD = 0.50
 	bounded.usage.CostUSD = 0.60

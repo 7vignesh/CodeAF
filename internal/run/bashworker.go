@@ -137,8 +137,9 @@ func (w *BashWorker) Run(ctx context.Context, task plandb.Task) (rep Report, run
 		// The run's daily ceiling and the person's standing permission to spend
 		// past it travel to the worker's session, which carries no ProfileDir to
 		// read them from (session.go's [Config.DailyBudgetUSD], #1546).
-		DailyBudgetUSD:     w.dailyBudgetUSD,
-		SpendPreauthorized: w.spendPreauthorized,
+		DailyBudgetUSD:      w.dailyBudgetUSD,
+		DailyBudgetResolved: true,
+		SpendPreauthorized:  w.spendPreauthorized,
 	}, w.completer, &task, w.store.Path(), w.store.RootID())
 	if err != nil {
 		return Report{}, err

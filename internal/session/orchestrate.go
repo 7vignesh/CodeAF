@@ -1105,14 +1105,15 @@ func (e *orchestrateExec) newChild(dir string, node orchestrate.Node) (*Agent, e
 		// node's exact reason (task_run.go's newChildAgent): a worker reads no
 		// profile, so the root's figure travels with it (rail.go's
 		// [Agent.dailyCeilingUSD]) and the person's `--yes-spend` with it.
-		DailyBudgetUSD:     a.dailyCeilingUSD(),
-		SpendPreauthorized: a.config.SpendPreauthorized,
-		Workspace:          dir,
-		Model:              model,
-		APIKey:             parent.APIKey,
-		BaseURL:            parent.BaseURL,
-		Sources:            parent.Sources,
-		ContextWindow:      window,
+		DailyBudgetUSD:      a.dailyCeilingUSD(),
+		DailyBudgetResolved: true,
+		SpendPreauthorized:  a.config.SpendPreauthorized,
+		Workspace:           dir,
+		Model:               model,
+		APIKey:              parent.APIKey,
+		BaseURL:             parent.BaseURL,
+		Sources:             parent.Sources,
+		ContextWindow:       window,
 		// And the catalog with it, for the reason newTaskAgent hands it down:
 		// a worker that switches its own model has to be able to learn that
 		// model's window.
